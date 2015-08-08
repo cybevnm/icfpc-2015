@@ -501,7 +501,7 @@
   (let ((*max-depth* max-depth))
     (game/start game seed-index)
     (game/step-recurs game)))
-(defun game/play-few-times (game seed-index &key (times 150))
+(defun game/play-few-times (game seed-index &key (times 10000))
   "Game will not be modified"
   (let ((max-points most-negative-fixnum)
         (best-chain nil)
@@ -514,7 +514,7 @@
               (setf max-points (game/points game))
               (setf best-chain (game/curr-chain game))
               (setf best-game game)))))))
-(defun game/play-problems-dir (dir-path)
+(defun game/play-problems-dir (dir-path action)
   (let ((games nil))
     (dolist (path (list-directory dir-path))
       (push (file->game path) games))
@@ -524,8 +524,18 @@
         (dotimes (seed-index (length (game/seeds game)))
           (push (game/play-few-times game seed-index)
                 decomposed-games)))
-      (game/send-results
-       (games->results-json (reverse decomposed-games))))))
+      (nreversef decomposed-games)
+      (values (funcall action decomposed-games)
+              decomposed-games))))
+(defun game/play-problems-dir-and-send (dir-path)
+  (game/play-problems-dir
+   dir-path (lambda (games)
+              (game/send-results
+               (games->results-json games)))))
+(defun game/play-problems-dir-and-show-points (dir-path)
+  (game/play-problems-dir
+   dir-path (lambda (games)
+              (mapcar #'game/points games))))
 ;; (defun game/play-few-times-and-send-results (game seed-index)
 ;;   (let* ((game (game/clone *game*)))
 ;;     (multiple-value-bind (pts chain game)
