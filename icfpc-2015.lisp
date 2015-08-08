@@ -5,7 +5,11 @@
         :serapeum
         :cl-annot
         :annot.std
-        ))
+        :cl-fad)
+  (:shadowing-import-from
+   :alexandria
+   :copy-stream
+   :copy-file))
 (in-package :icfpc-2015)
 (cl-syntax:use-syntax :annot)
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -14,6 +18,11 @@
 (defun message (item)
   (when *verbose*
     (print item)))
+(defun mand-assocdr (foo alist)
+  "Mandatory assoc, returns foo's value from
+   alist or signals error if no such value"
+  (cdr (or (assoc foo alist)
+           (error "Can't find ~A in alist" foo))))
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 @export
@@ -168,7 +177,7 @@
       (let ((x (point/x c)))
         (setf min-x (min x min-x)
               max-x (max x max-x))))
-    (- max-x min-x)))
+    (1+ (- max-x min-x))))
 (defun unit/rotate (unit rotator)
   (with-slots (cells pivot) unit
     (make-instance
@@ -191,13 +200,7 @@
 @export
 (defun unit/rotate-cw (unit)
   (unit/rotate unit #'point3/rotate-cw))
-(defun unit/valid-dx-dy-p (dx dy)
-  (or (and (= dx 1) (= dy 0))
-      (and (= dx -1) (= dy 0))
-      (and (= dx 1) (= dy 1))
-      (and (= dx -1) (= dy 1))))
 (defun unit/move (unit dx dy)
-  (assert (unit/valid-dx-dy-p dx dy))
   (lret ((result (unit/clone unit)))
     (setf (unit/pos result)
           (point+ (unit/pos result) (make-point dx dy)))))
@@ -207,10 +210,10 @@
   (unit/move unit 1 0))
 (defun unit/move-sw (unit)
   (let ((y (point/y (unit/pos unit))))
-    (unit/move unit -1 (if (evenp y) 1 0))))
+    (unit/move unit (if (evenp y) -1 0) 1)))
 (defun unit/move-se (unit)
   (let ((y (point/y (unit/pos unit))))
-    (unit/move unit 1 (if (evenp y) 0 1))))
+    (unit/move unit (if (evenp y) 0 1) 1)))
 @export
 (defun unit= (a b)
   (let ((a-cells (unit/cells a))
@@ -321,7 +324,7 @@
       (dotimes (x width)
         (setf (board/cell board x y) :empty))
       (loop for y from (1- y) downto 0
-         do (dolist (x width)
+         do (dotimes (x width)
               (setf (board/cell board x (1+ y))
                     (board/cell board x y))
               (setf (board/cell board x y) :empty))))
@@ -336,28 +339,39 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 @export
 (defclass game ()
-  ((id :initarg :id)
+  ((id :initarg :id :reader game/id)
    (board :initarg :board :accessor game/board)
    (units :initarg :units :accessor game/units)
    (source-len :initarg :source-len
                :accessor game/source-len)
    (seeds :initarg :seeds :accessor game/seeds)
+   (curr-seed :initarg :curr-seed :initform nil
+              :accessor game/curr-seed
+              :documentation "Contains seed which in use
+                              for current simulation")
+   (curr-chain :initarg :curr-chain :initform nil
+               :accessor game/curr-chain
+               :documentation "Contains chain of moves for
+                               current simulation")
    (curr-unit :initarg :curr-unit :initform nil
               :accessor game/curr-unit)
    (points :initarg :points :initform 0
            :accessor game/points)
+
    (prev-lines-cleared :initarg :prev-lines-cleared :initform 0
                        :accessor game/prev-lines-cleared)))
 (defun game/clone (game)
   (with-slots (id board units source-len
-                  seeds curr-unit points
+                  seeds curr-seed curr-chain
+                  curr-unit points
                   prev-lines-cleared) game
     (make-instance
      'game
      :id id :board (board/clone board)
      :units units :source-len source-len
-     :seeds seeds :curr-unit curr-unit
-     :points points
+     :seeds seeds :curr-seed curr-seed
+     :curr-chain curr-chain
+     :curr-unit curr-unit :points points
      :prev-lines-cleared prev-lines-cleared)))
 (defmethod initialize-instance
     :after ((game game) &key width height filled)
@@ -368,11 +382,9 @@
                          :width width :height height)))
             (dolist (f filled)
               (setf (board/cell* board f) :full))))))
-(defun mand-assocdr (foo alist)
-  "Mandatory assoc, returns foo's value from
-   alist or signals error if no such value"
-  (cdr (or (assoc foo alist)
-           (error "Can't find ~A in alist" foo))))
+(defun game/dump-board (game)
+  (board/dump (game/board game)
+              :unit (game/curr-unit game)))
 (defun alist->game (alist)
   (labels ((raw-point->point (raw-point)
              (make-point
@@ -407,24 +419,24 @@
 (defun game/start (game seed-index)
   (let ((seeds (game/seeds game)))
     (assert (< seed-index (length seeds)))
-    (rand/seed (nth seed-index seeds))))
+    (let ((seed (nth seed-index seeds)))
+      (setf (game/curr-seed game) seed)
+      (rand/seed seed))))
 (defun game/spawn-unit (game)
   (let* ((index (rand/next))
          (units (game/units game))
          (unit (nth (mod index (length units)) units))
          (unit-width (unit/width unit))
          (board-width (board/width (game/board game))))
-    (setf (game/curr-unit game)
-          (lret ((new-unit (unit/clone unit)))
-            (setf (unit/pos new-unit)
-                  (make-point
-                   (floor (/ (- board-width unit-width) 2))
-                   (point/y (unit/pos new-unit))))))))
-;; (defclass move ()
-;;   ((type :initarg :type
-;;          :documentation "One of :move-w :move-e
-;;                                 :move-sw :move-se
-;;                                 :rotate-cw :rotate-ccw")))
+    (decf (game/source-len game))
+    (when (game/source-len game)
+      (setf (game/curr-unit game)
+            (lret ((new-unit (unit/clone unit)))
+              (setf (unit/pos new-unit)
+                    (make-point
+                     (floor (/ (- board-width unit-width) 2))
+                     (point/y (unit/pos new-unit))))))
+      t)))
 (defun move-type->func (type)
   (ecase type
     (:move-w #'unit/move-w)
@@ -433,9 +445,6 @@
     (:move-se #'unit/move-se)
     (:rotate-cw #'unit/rotate-cw)
     (:rotate-ccw #'unit/rotate-ccw)))
-;; (defun game/enum-moves (game)
-;;   )
-
 (defun game/integrate-curr-unit (game)
   (with-slots (curr-unit points board prev-lines-cleared) game
     (when curr-unit
@@ -455,24 +464,22 @@
         (incf points (+ points bonus))
         (setf prev-lines-cleared lines-cleared)
         (setf curr-unit nil)))))
-(defparameter *max-depth* 10)
+(defparameter *max-depth* 100)
 (defun game/step-recurs (game &key (depth 0))
   "Return :no-units-left
           :no-place-for-next-unit
           :max-depth-reached"
   (with-slots (source-len curr-unit board) game
     ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-    (when (zerop (game/source-len game))
-      (game/integrate-curr-unit game)
-      (return-from game/step-recurs
-        (values :no-units-left nil)))
-    ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
     (unless curr-unit
-      (game/spawn-unit game))
+      (unless (game/spawn-unit game)
+        (return-from game/step-recurs :no-units-left)))
+    ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+    ;; (game/dump-board game)
+    ;; (terpri)
     ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
     (unless (board/valid-unit-p board curr-unit)
-      (return-from game/step-recurs
-        (values :no-place-for-next-unit nil)))
+      (return-from game/step-recurs :no-place-for-next-unit))
     ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
     (let ((type
            (random-elt '(;;:move-w :move-e
@@ -485,29 +492,94 @@
             (setf curr-unit moved-unit)
             (game/integrate-curr-unit game))
         (if (>= depth *max-depth*)
-            (values :max-depth-reached nil)
-            (multiple-value-bind (result chain)
-                (game/step-recurs game :depth (1+ depth))
-              (values result (cons type chain))))))))
+            :max-depth-reached
+            (progn
+              (setf (game/curr-chain game)
+                    (append (game/curr-chain game) (list type)))
+              (game/step-recurs game :depth (1+ depth))))))))
 (defun game/play (game seed-index &key max-depth)
   (let ((*max-depth* max-depth))
     (game/start game seed-index)
-    (multiple-value-bind (result chain)
-        (game/step-recurs game)
-      (message result)
-      (message chain))
-    (game/points game)))
-(defun game/play-few-times (game seed-index)
-  (let ((max-score most-negative-fixnum))
-    (dotimes (x 1000 max-score)
-      (let ((curr
-             (game/play
-              (game/clone game) seed-index
-              :max-depth 200)))
-        (setf max-score (max curr max-score))))))
-(defun game/dump-board (game)
-  (board/dump (game/board game)
-              :unit (game/curr-unit game)))
+    (game/step-recurs game)))
+(defun game/play-few-times (game seed-index &key (times 150))
+  "Game will not be modified"
+  (let ((max-points most-negative-fixnum)
+        (best-chain nil)
+        (best-game nil))
+    (dotimes (x times best-game)
+      (let ((game (game/clone game)))
+        (game/play game seed-index :max-depth 200)
+        (let ((points (game/points game)))
+            (when (> points max-points)
+              (setf max-points (game/points game))
+              (setf best-chain (game/curr-chain game))
+              (setf best-game game)))))))
+(defun game/play-problems-dir (dir-path)
+  (let ((games nil))
+    (dolist (path (list-directory dir-path))
+      (push (file->game path) games))
+    (nreversef games)
+    (let ((decomposed-games nil))
+      (dolist (game games)
+        (dotimes (seed-index (length (game/seeds game)))
+          (push (game/play-few-times game seed-index)
+                decomposed-games)))
+      (game/send-results
+       (games->results-json (reverse decomposed-games))))))
+;; (defun game/play-few-times-and-send-results (game seed-index)
+;;   (let* ((game (game/clone *game*)))
+;;     (multiple-value-bind (pts chain game)
+;;         (game/play-few-times game 0 :times 15000)
+;;       (let ((json (game->results-json game chain)))
+;;         ;(game/send-results json)
+;;         ))))
+(defun move-type->code (type)
+  (ecase type
+    (:move-w #\p)
+    (:move-e #\b)
+    (:move-sw #\a)
+    (:move-se #\l)
+    (:rotate-cw #\d)
+    (:rotate-ccw #\k)))
+(defun chain->code-string (chain)
+  (map 'string #'move-type->code chain))
+(defvar *default-tag* "default-tag")
+(defun games->results-alist (games
+                             &key (tag *default-tag*))
+  @ignore tag
+  `#(,@(mapcar
+        (lambda (game)
+          `(("problemId" . ,(game/id game))
+            ("seed" . ,(game/curr-seed game))
+                                        ;("tag" . ,tag)
+            ("solution" . ,(chain->code-string
+                            (game/curr-chain game)))))
+        games)))
+;(defun game/encode-results-to-json (games))
+(defun games->results-json (games &key (tag *default-tag*))
+  (json:encode-json-to-string
+   (game->results-alist games :tag tag)))
+(defvar *team-id* 0)
+(defvar *api-key* "no-key-specified")
+(defun game/send-results (json
+                          &key (tag *default-tag*)
+                            (team-id *team-id*)
+                            (api-key *api-key*))
+  (assert team-id)
+  (drakma:http-request
+   (format nil "https://davar.icfpcontest.org/teams/~A/solutions"
+           team-id)
+   :method :post
+   :content-type "application/json"
+   :content json
+   :basic-authorization (list "" api-key)))
+(defun game/send-results2 (game chain
+                          &key (tag *default-tag*)
+                            (team-id *team-id*)
+                            (api-key *api-key*))
+  (game/send-results (game->results-json game chain :tag tag)
+                     :tag tag :team-id team-id :api-key api-key))
+
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; {p, ', !, ., 0, 3}	move W

@@ -6,7 +6,10 @@
                :cl-annot
                :cl-syntax
                :cl-syntax-annot
-               :cl-json)
+               :cl-json
+               :drakma ;; sending results
+               :cl-fad ;; listing dir
+               )
   :components ((:file :icfpc-2015)))
 
 (asdf:defsystem icfpc-2015-test
