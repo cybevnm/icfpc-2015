@@ -10,6 +10,12 @@
 (cl-syntax:use-syntax :annot)
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(defparameter *verbose* nil)
+(defun message (item)
+  (when *verbose*
+    (print item)))
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 @export
 (defun rand/make (seed)
   "From rosetta code"
@@ -201,10 +207,10 @@
   (unit/move unit 1 0))
 (defun unit/move-sw (unit)
   (let ((y (point/y (unit/pos unit))))
-    (unit/move unit -1 (if (evenp y) -1 0))))
+    (unit/move unit -1 (if (evenp y) 1 0))))
 (defun unit/move-se (unit)
   (let ((y (point/y (unit/pos unit))))
-    (unit/move unit -1 (if (evenp y) 0 1))))
+    (unit/move unit 1 (if (evenp y) 0 1))))
 @export
 (defun unit= (a b)
   (let ((a-cells (unit/cells a))
@@ -271,16 +277,17 @@
 (defun board/dump (board &key unit)
   (dotimes (y (board/height board))
     (dotimes (x (board/width board))
-      (let ((cell-is-here
+      (let ((unit-cell-is-here
              (when unit
                (dolist (c (unit/cells unit))
                  (when (point=
                         (unit/abs-pos unit c)
                         (make-point x y))
                    (return t))))))
-        (if cell-is-here
-            (format
-             t (if (evenp y) "@ " " @"))
+        (if unit-cell-is-here
+            (if (eq (board/cell board x y) :full)
+                (format t (if (evenp y) "X " " X"))
+                (format t (if (evenp y) "@ " " @")))
             (format
              t (if (evenp y) "~A " " ~A")
              (cell->symbol (board/cell board x y))))))
@@ -398,7 +405,9 @@
     (stream->game stream)))
 
 (defun game/start (game seed-index)
-  (rand/seed (nth seed-index (game/seeds game))))
+  (let ((seeds (game/seeds game)))
+    (assert (< seed-index (length seeds)))
+    (rand/seed (nth seed-index seeds))))
 (defun game/spawn-unit (game)
   (let* ((index (rand/next))
          (units (game/units game))
@@ -423,48 +432,79 @@
     (:move-sw #'unit/move-sw)
     (:move-se #'unit/move-se)
     (:rotate-cw #'unit/rotate-cw)
-    (:rotate-ccww #'unit/rotate-ccw)))
+    (:rotate-ccw #'unit/rotate-ccw)))
 ;; (defun game/enum-moves (game)
 ;;   )
+
 (defun game/integrate-curr-unit (game)
   (with-slots (curr-unit points board prev-lines-cleared) game
-    (incf points (length (unit/cells curr-unit)))
-    (let* ((lines-cleared
-           (board/integrate-unit board curr-unit))
-           (points
-            (* 100
-               (1+ lines-cleared)
-               (/ lines-cleared 2)))
-           (bonus
-            (if (> prev-lines-cleared 1)
-                (floor (* (1- prev-lines-cleared)
-                          points
-                          0.1))
-                0)))
-      (incf points (+ points bonus))
-      (setf prev-lines-cleared lines-cleared)
-      (setf curr-unit nil))))
-(defun game/step (game)
-  "Return :no-units-left-end
-          :no-place-for-next-unit-end"
+    (when curr-unit
+      (incf points (length (unit/cells curr-unit)))
+      (let* ((lines-cleared
+              (board/integrate-unit board curr-unit))
+             (points
+              (* 100
+                 (1+ lines-cleared)
+                 (/ lines-cleared 2)))
+             (bonus
+              (if (> prev-lines-cleared 1)
+                  (floor (* (1- prev-lines-cleared)
+                            points
+                            0.1))
+                  0)))
+        (incf points (+ points bonus))
+        (setf prev-lines-cleared lines-cleared)
+        (setf curr-unit nil)))))
+(defparameter *max-depth* 10)
+(defun game/step-recurs (game &key (depth 0))
+  "Return :no-units-left
+          :no-place-for-next-unit
+          :max-depth-reached"
   (with-slots (source-len curr-unit board) game
+    ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
     (when (zerop (game/source-len game))
-      (return-from game/step :no-units-left-end))
+      (game/integrate-curr-unit game)
+      (return-from game/step-recurs
+        (values :no-units-left nil)))
+    ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
     (unless curr-unit
       (game/spawn-unit game))
+    ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
     (unless (board/valid-unit-p board curr-unit)
-      (return-from game/step :no-place-for-next-unit-end))
-    (dolist (type '(:move-w :move-e :move-se :rotate-cw :rotate-ccw))
+      (return-from game/step-recurs
+        (values :no-place-for-next-unit nil)))
+    ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+    (let ((type
+           (random-elt '(;;:move-w :move-e
+                         :move-se :move-sw
+                         ;;:rotate-cw :rotate-ccw
+                         ))))
       (let ((moved-unit
              (funcall (move-type->func type) curr-unit)))
-        (assert moved-unit)
         (if (board/valid-unit-p board moved-unit)
-            (progn
-              (setf curr-unit moved-unit)
-              (return-from game/step :todo-implement-end))
-            (progn
-              (game/integrate-curr-unit game)
-              (game/points game)))))))
+            (setf curr-unit moved-unit)
+            (game/integrate-curr-unit game))
+        (if (>= depth *max-depth*)
+            (values :max-depth-reached nil)
+            (multiple-value-bind (result chain)
+                (game/step-recurs game :depth (1+ depth))
+              (values result (cons type chain))))))))
+(defun game/play (game seed-index &key max-depth)
+  (let ((*max-depth* max-depth))
+    (game/start game seed-index)
+    (multiple-value-bind (result chain)
+        (game/step-recurs game)
+      (message result)
+      (message chain))
+    (game/points game)))
+(defun game/play-few-times (game seed-index)
+  (let ((max-score most-negative-fixnum))
+    (dotimes (x 1000 max-score)
+      (let ((curr
+             (game/play
+              (game/clone game) seed-index
+              :max-depth 200)))
+        (setf max-score (max curr max-score))))))
 (defun game/dump-board (game)
   (board/dump (game/board game)
               :unit (game/curr-unit game)))
@@ -479,6 +519,3 @@
 ;; \t, \n, \r	(ignored)
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-(defun ai/play-seed (game index)
-  "INDEX should be less than number of seeds"
-  )
