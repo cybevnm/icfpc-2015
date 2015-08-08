@@ -355,6 +355,13 @@
                                current simulation")
    (curr-unit :initarg :curr-unit :initform nil
               :accessor game/curr-unit)
+   (curr-unit-visited-points
+    :initarg :curr-unit-visited-points
+    :initform nil
+    :accessor game/curr-unit-visited-points
+    :documentation "List of points which were visited 
+                    by curr-unit. It's an error to visit
+                    same point twice")
    (points :initarg :points :initform 0
            :accessor game/points)
 
@@ -363,7 +370,9 @@
 (defun game/clone (game)
   (with-slots (id board units source-len
                   seeds curr-seed curr-chain
-                  curr-unit points
+                  curr-unit
+                  curr-unit-visited-points
+                  points
                   prev-lines-cleared) game
     (make-instance
      'game
@@ -371,7 +380,9 @@
      :units units :source-len source-len
      :seeds seeds :curr-seed curr-seed
      :curr-chain curr-chain
-     :curr-unit curr-unit :points points
+     :curr-unit curr-unit
+     :curr-unit-visited-points curr-unit-visited-points
+     :points points
      :prev-lines-cleared prev-lines-cleared)))
 (defmethod initialize-instance
     :after ((game game) &key width height filled)
@@ -437,6 +448,28 @@
                      (floor (/ (- board-width unit-width) 2))
                      (point/y (unit/pos new-unit))))))
       t)))
+(defun game/valid-unit-p (game unit)
+  (and 
+       (not )))
+(defun game/move-curr-unit (game type)
+  "Return :good-move or :bad-move"
+  (with-slots (board
+               curr-unit
+               curr-unit-visited-points) game
+    (let ((moved-unit
+           (funcall (move-type->func type) curr-unit)))
+      (cond
+        ((member (unit/pos moved-unit)
+                 (game/curr-unit-visited-points game)
+                 :test #'point=)
+         :bad-move)
+        ((board/valid-unit-p board moved-unit)
+         (setf curr-unit moved-unit)
+         (append curr-unit-visited-points
+                 (list (unit/pos moved-unit)))
+         :good-move)
+        (t (game/integrate-curr-unit game)
+           :good-move)))))
 (defun move-type->func (type)
   (ecase type
     (:move-w #'unit/move-w)
@@ -465,7 +498,7 @@
         (setf prev-lines-cleared lines-cleared)
         (setf curr-unit nil)))))
 (defparameter *max-depth* 100)
-(defun game/step-recurs (game &key (depth 0))
+(defun game/step-recurs (game &key (depth 0) allow-hor-movement)
   "Return :no-units-left
           :no-place-for-next-unit
           :max-depth-reached"
@@ -482,38 +515,45 @@
       (return-from game/step-recurs :no-place-for-next-unit))
     ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
     (let ((type
-           (random-elt '(;;:move-w :move-e
-                         :move-se :move-sw
-                         ;;:rotate-cw :rotate-ccw
-                         ))))
-      (let ((moved-unit
-             (funcall (move-type->func type) curr-unit)))
-        (if (board/valid-unit-p board moved-unit)
-            (setf curr-unit moved-unit)
-            (game/integrate-curr-unit game))
-        (if (>= depth *max-depth*)
-            :max-depth-reached
-            (progn
-              (setf (game/curr-chain game)
-                    (append (game/curr-chain game) (list type)))
-              (game/step-recurs game :depth (1+ depth))))))))
-(defun game/play (game seed-index &key max-depth)
+           (random-elt (if allow-hor-movement
+                           '(:move-w :move-e
+                             :move-se :move-sw
+                             ;;:rotate-cw :rotate-ccw
+                             )
+                           '(:move-se :move-sw)))))
+      (ecase (game/move-curr-unit game type)
+        (:good-move
+         (if (>= depth *max-depth*)
+             :max-depth-reached
+             (progn
+               (setf (game/curr-chain game)
+                     (append (game/curr-chain game) (list type)))
+               (game/step-recurs game :depth (1+ depth)))))
+        (:bad-move :bad-move-encountered)))))
+(defun game/play (game seed-index
+                  &key max-depth allow-hor-movement)
   (let ((*max-depth* max-depth))
     (game/start game seed-index)
-    (game/step-recurs game)))
-(defun game/play-few-times (game seed-index &key (times 10000))
+    (game/step-recurs
+     game :allow-hor-movement allow-hor-movement)))
+(defun game/play-few-times (game seed-index &key (times 150))
   "Game will not be modified"
   (let ((max-points most-negative-fixnum)
         (best-chain nil)
         (best-game nil))
-    (dotimes (x times best-game)
-      (let ((game (game/clone game)))
-        (game/play game seed-index :max-depth 200)
-        (let ((points (game/points game)))
-            (when (> points max-points)
-              (setf max-points (game/points game))
-              (setf best-chain (game/curr-chain game))
-              (setf best-game game)))))))
+    (labels ((one-pass (&key allow-hor-movement)
+               (dotimes (x times)
+                 (let ((game (game/clone game)))
+                   (game/play game seed-index :max-depth 200
+                              :allow-hor-movement allow-hor-movement)
+                   (let ((points (game/points game)))
+                     (when (> points max-points)
+                       (setf max-points (game/points game))
+                       (setf best-chain (game/curr-chain game))
+                       (setf best-game game)))))))
+      (one-pass :allow-hor-movement nil)
+      (one-pass :allow-hor-movement t)
+      best-game)))
 (defun game/play-problems-dir (dir-path action)
   (let ((games nil))
     (dolist (path (list-directory dir-path))
