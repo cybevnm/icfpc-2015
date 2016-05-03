@@ -14,6 +14,15 @@
 (cl-syntax:use-syntax :annot)
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; {p, ', !, ., 0, 3}	move W
+;; {b, c, e, f, y, 2}	move E
+;; {a, g, h, i, j, 4}	move SW
+;; {l, m, n, o, space, 5}    	move SE
+;; {d, q, r, v, z, 1}	rotate clockwise
+;; {k, s, t, u, w, x}	rotate counter-clockwise
+;; \t, \n, \r	(ignored)
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 (defparameter *verbose* nil)
 (defun message (item)
   (when *verbose*
@@ -102,10 +111,10 @@
    (- (point3/z a) (point3/z b))))
 @export
 (defun point->point3 (point)
-  ;; # convert odd-r offset to cube
-  ;; x = col - (row - (row&1)) / 2
-  ;; z = row
-  ;; y = -x-z
+  "Convert odd-r offset to cube
+   x = col - (row - (row&1)) / 2
+   z = row
+   y = -x-z"
   (let* ((col (point/x point))
          (row (point/y point))
          (x (- col (/ (- row (if (oddp row) 1 0)) 2)))
@@ -114,9 +123,9 @@
     (make-point3 x y z)))
 @export
 (defun point3->point (point3)
-  ;; # convert cube to odd-r offset
-  ;; col = x + (z - (z&1)) / 2
-  ;; row = z
+  "Convert cube to odd-r offset
+   col = x + (z - (z&1)) / 2
+   row = z"
   (let ((x (point3/x point3))
         (z (point3/z point3)))
     (make-point
@@ -427,7 +436,6 @@
 (defun file->game (path)
   (with-input-from-file (stream path)
     (stream->game stream)))
-
 (defun game/start (game seed-index)
   (let ((seeds (game/seeds game)))
     (assert (< seed-index (length seeds)))
@@ -449,9 +457,6 @@
                      (floor (/ (- board-width unit-width) 2))
                      (point/y (unit/pos new-unit))))))
       t)))
-(defun game/valid-unit-p (game unit)
-  (and 
-       (not )))
 (defun game/move-curr-unit (game type)
   "Return :good-move or :bad-move"
   (with-slots (board
@@ -508,9 +513,6 @@
     (unless curr-unit
       (unless (game/spawn-unit game)
         (return-from game/step-recurs :no-units-left)))
-    ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-    ;; (game/dump-board game)
-    ;; (terpri)
     ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
     (unless (board/valid-unit-p board curr-unit)
       (return-from game/step-recurs :no-place-for-next-unit))
@@ -577,13 +579,6 @@
   (game/play-problems-dir
    dir-path (lambda (games)
               (mapcar #'game/points games))))
-;; (defun game/play-few-times-and-send-results (game seed-index)
-;;   (let* ((game (game/clone *game*)))
-;;     (multiple-value-bind (pts chain game)
-;;         (game/play-few-times game 0 :times 15000)
-;;       (let ((json (game->results-json game chain)))
-;;         ;(game/send-results json)
-;;         ))))
 (defun move-type->code (type)
   (ecase type
     (:move-w #\p)
@@ -610,7 +605,6 @@
             ("solution" . ,(chain->code-string
                             (game/curr-chain game)))))
         games)))
-;(defun game/encode-results-to-json (games))
 (defun games->results-json (games &key (tag *default-tag*))
   (json:encode-json-to-string
    (game->results-alist games :tag tag)))
@@ -634,15 +628,5 @@
                             (api-key *api-key*))
   (game/send-results (game->results-json game chain :tag tag)
                      :tag tag :team-id team-id :api-key api-key))
-
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;; {p, ', !, ., 0, 3}	move W
-;; {b, c, e, f, y, 2}	move E
-;; {a, g, h, i, j, 4}	move SW
-;; {l, m, n, o, space, 5}    	move SE
-;; {d, q, r, v, z, 1}	rotate clockwise
-;; {k, s, t, u, w, x}	rotate counter-clockwise
-;; \t, \n, \r	(ignored)
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
