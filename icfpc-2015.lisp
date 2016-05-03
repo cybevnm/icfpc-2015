@@ -27,7 +27,8 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 @export
 (defun rand/make (seed)
-  "From rosetta code"
+  "The implementation is inspired by rosetta code, 
+   the constants are from the ICFPC task IIRC."
   (let ((modulus (expt 2 31)))
     (lambda ()
       (aprog1 (ash seed -16)
