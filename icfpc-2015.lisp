@@ -1,3 +1,6 @@
+;;;; ICFPC2015 solution code chunks.
+;;;; Copyright (C) 2015 cybevnm 
+
 (defpackage :icfpc-2015
   (:use :cl
         :alexandria
