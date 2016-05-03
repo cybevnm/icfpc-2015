@@ -593,7 +593,11 @@
     (:rotate-cw #\d)
     (:rotate-ccw #\k)))
 (defun chain->code-string (chain)
-  (map 'string #'move-type->code chain))
+  (let ((string
+         (map 'string #'move-type->code chain)))
+    (awhen (search "pab" string)
+      (setf string (replace string "Ei!" :start1 it)))
+    string))
 (defvar *default-tag* "default-tag")
 (defun games->results-alist (games
                              &key (tag *default-tag*))
